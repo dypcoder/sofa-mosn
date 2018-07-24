@@ -31,6 +31,7 @@ import (
 	"github.com/alipay/sofa-mosn/pkg/filter/accept/originaldst"
 	"github.com/alipay/sofa-mosn/pkg/log"
 	"github.com/alipay/sofa-mosn/pkg/network"
+	"github.com/alipay/sofa-mosn/pkg/protocol"
 	"github.com/alipay/sofa-mosn/pkg/types"
 	"fmt"
 )
@@ -120,7 +121,7 @@ func (ch *connHandler) AddListener(lc *v2.ListenerConfig, networkFiltersFactory 
 
 	l := network.NewListener(lc, logger)
 
-	al := newActiveListener(l, logger, als, networkFiltersFactory, streamFiltersFactories, ch, listenerStopChan, lc.DisableConnIo)
+	al := newActiveListener(l, logger, als, networkFiltersFactory, streamFiltersFactories, ch, listenerStopChan, lc.DownstreamProtocol)
 	l.SetListenerCallbacks(al)
 
 	ch.listeners = append(ch.listeners, al)
@@ -211,7 +212,7 @@ func (ch *connHandler) findActiveListenerByAddress(addr net.Addr) *activeListene
 
 // ListenerEventListener
 type activeListener struct {
-	disableConnIo          bool
+	downstreamProtocol     string
 	listener               types.Listener
 	networkFiltersFactory  types.NetworkFilterChainFactory
 	streamFiltersFactories []types.StreamFilterChainFactory
@@ -229,17 +230,17 @@ type activeListener struct {
 
 func newActiveListener(listener types.Listener, logger log.Logger, accessLoggers []types.AccessLog,
 	networkFiltersFactory types.NetworkFilterChainFactory, streamFiltersFactories []types.StreamFilterChainFactory,
-	handler *connHandler, stopChan chan struct{}, disableConnIo bool) *activeListener {
+	handler *connHandler, stopChan chan struct{}, downstreamProtocol string) *activeListener {
 	al := &activeListener{
-		disableConnIo:          disableConnIo,
+		downstreamProtocol:     downstreamProtocol,
 		listener:               listener,
 		networkFiltersFactory:  networkFiltersFactory,
 		streamFiltersFactories: streamFiltersFactories,
-		conns:      list.New(),
-		handler:    handler,
-		stopChan:   stopChan,
-		logger:     logger,
-		accessLogs: accessLoggers,
+		conns:                  list.New(),
+		handler:                handler,
+		stopChan:               stopChan,
+		logger:                 logger,
+		accessLogs:             accessLoggers,
 	}
 
 	listenPort := 0
@@ -291,7 +292,7 @@ func (al *activeListener) OnNewConnection(ctx context.Context, conn types.Connec
 	buildFilterChain(conn.FilterManager(), configFactory)
 
 	// todo: this hack is due to http2 protocol process. golang http2 provides a io loop to read/write stream
-	if !al.disableConnIo {
+	if al.downstreamProtocol != string(protocol.HTTP2) {
 		// start conn loops first
 		conn.Start(ctx)
 	}

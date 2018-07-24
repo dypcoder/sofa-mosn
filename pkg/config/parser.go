@@ -463,7 +463,6 @@ func ParseListenerConfig(c *ListenerConfig, inheritListeners []*v2.ListenerConfi
 		LogPath:                               c.LogPath,
 		LogLevel:                              uint8(parseLogLevel(c.LogLevel)),
 		AccessLogs:                            parseAccessConfig(c.AccessLogs),
-		DisableConnIo:                         c.DisableConnIo,
 		HandOffRestoredDestinationConnections: c.HandOffRestoredDestinationConnections,
 		FilterChains:                          parseFilterChains(c.FilterChains),
 	}
@@ -471,6 +470,10 @@ func ParseListenerConfig(c *ListenerConfig, inheritListeners []*v2.ListenerConfi
 
 // ParseClusterConfig
 func ParseClusterConfig(clusters []ClusterConfig) ([]v2.Cluster, map[string][]v2.Host) {
+	if len(clusters) == 0 {
+		log.StartLogger.Fatalln("No Cluster provided in cluster config")
+	}
+	
 	var clustersV2 []v2.Cluster
 	clusterV2Map := make(map[string][]v2.Host)
 

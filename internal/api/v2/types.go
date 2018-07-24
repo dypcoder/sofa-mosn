@@ -129,7 +129,7 @@ type ListenerConfig struct {
 	LogPath                               string // log
 	LogLevel                              uint8
 	AccessLogs                            []AccessLog
-	DisableConnIo                         bool          // only used in http2 case
+	DownstreamProtocol                    string            // parse from proxy,used to check http2
 	FilterChains                          []FilterChain // FilterChains
 }
 

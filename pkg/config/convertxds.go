@@ -79,8 +79,8 @@ func convertListenerConfig(xdsListener *xdsapi.Listener) *v2.ListenerConfig {
 	// it must be 1 filechains and 1 networkfilter by design
 	if listenerConfig.FilterChains != nil && len(listenerConfig.FilterChains) == 1 && listenerConfig.FilterChains[0].Filters != nil && len(listenerConfig.FilterChains[0].Filters) == 1 && listenerConfig.FilterChains[0].Filters[0].Config != nil {
 		if downstreamProtocol, ok := listenerConfig.FilterChains[0].Filters[0].Config["DownstreamProtocol"]; ok {
-			if value, ok := downstreamProtocol.(string); ok && value == string(protocol.HTTP2) {
-				listenerConfig.DisableConnIo = true
+			if pro, ok := downstreamProtocol.(string); ok {
+				listenerConfig.DownstreamProtocol = pro
 			}
 		}
 	}

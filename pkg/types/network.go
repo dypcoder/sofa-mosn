@@ -530,7 +530,7 @@ type Addresses []net.Addr
 // Contains reports whether the specified network address is in the group.
 func (as Addresses) Contains(addr net.Addr) bool {
 	for _, one := range as {
-		// TODO: support port wildcard
+		// TODO: support port wildcardM
 		if one.String() == addr.String() {
 			return true
 		}
