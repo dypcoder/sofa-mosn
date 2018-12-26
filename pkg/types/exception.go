@@ -17,6 +17,8 @@
 
 package types
 
+import "errors"
+
 // Header key types
 const (
 	HeaderStatus        = "x-mosn-status"
@@ -29,23 +31,37 @@ const (
 	HeaderTryTimeout    = "x-mosn-try-timeout"
 	HeaderException     = "x-mosn-exception"
 	HeaderStremEnd      = "x-mosn-endstream"
+	HeaderRPCService    = "x-mosn-rpc-service"
+	HeaderRPCMethod     = "x-mosn-rpc-method"
 )
 
 // Error messages
 const (
-	UnSupportedProCode   string = "Protocol Code not supported"
-	CodecException       string = "Codec exception occurs"
-	DeserializeException string = "Deserial exception occurs"
+	CodecException       string = "codec exception occurs"
+	SerializeException   string = "serialize exception occurs"
+	DeserializeException string = "deserialize exception occurs"
+
+	NoStatusCodeForHijack string = "no status code found for hijack reply"
 )
 
-// Error codes
+// Errors
+var (
+	ErrCodecException       = errors.New(CodecException)
+	ErrSerializeException   = errors.New(SerializeException)
+	ErrDeserializeException = errors.New(DeserializeException)
+
+	ErrNoStatusCodeForHijack = errors.New(NoStatusCodeForHijack)
+)
+
+// Error codes, used by top level logic code(like proxy logic).
 const (
 	CodecExceptionCode    int = 0
 	UnknownCode           int = 2
 	DeserialExceptionCode int = 3
 	SuccessCode           int = 200
 	RouterUnavailableCode int = 404
-	NoHealthUpstreamCode  int = 500
+	NoHealthUpstreamCode  int = 502
 	UpstreamOverFlowCode  int = 503
 	TimeoutExceptionCode  int = 504
+	LimitExceededCode     int = 509
 )

@@ -1,20 +1,21 @@
 SHELL = /bin/bash
 
-TARGET       = mosnd
-CONFIG_FILE  = mosn_config.json
-GIT_USER     = alipay
-PROJECT_NAME = github.com/${GIT_USER}/sofa-mosn
+TARGET          = mosnd
+TARGET_SIDECAR  = mosn
+CONFIG_FILE     = mosn_config.json
+GIT_USER        = alipay
+PROJECT_NAME    = github.com/${GIT_USER}/sofa-mosn
 
-SCRIPT_DIR 	 = $(shell pwd)/etc/script
+SCRIPT_DIR      = $(shell pwd)/etc/script
 
-MAJOR_VERSION = $(shell cat VERSION)
-GIT_VERSION   = $(shell git log -1 --pretty=format:%h)
-GIT_NOTES     = $(shell git log -1 --oneline)
+MAJOR_VERSION   = $(shell cat VERSION)
+GIT_VERSION     = $(shell git log -1 --pretty=format:%h)
+GIT_NOTES       = $(shell git log -1 --oneline)
 
-BUILD_IMAGE   = godep-builder
+BUILD_IMAGE     = godep-builder
 
-IMAGE_NAME = ${GIT_USER}/mosnd
-REGISTRY = acs-reg.alipay.com
+IMAGE_NAME      = mosn
+REPOSITORY      = sofastack/${IMAGE_NAME}
 
 RPM_BUILD_IMAGE = afenp-rpm-builder
 RPM_VERSION     = $(shell cat VERSION | tr -d '-')
@@ -23,8 +24,7 @@ RPM_SRC_DIR     = ${RPM_TAR_NAME}-${RPM_VERSION}
 RPM_TAR_FILE    = ${RPM_SRC_DIR}.tar.gz
 
 ut-local:
-	go test ./pkg/...
-	go test ./test/...
+	go test -v `go list ./pkg/... | grep -v pkg/mtls/crypto/tls`
 
 unit-test:
 	docker build --rm -t ${BUILD_IMAGE} build/contrib/builder/binary
@@ -38,7 +38,7 @@ coverage:
 	docker run --rm -v $(GOPATH):/go -v $(shell pwd):/go/src/${PROJECT_NAME} -w /go/src/${PROJECT_NAME} ${BUILD_IMAGE} make coverage-local
 
 integrate-local:
-	go test ./test/...
+	go test -p 1 -v ./test/integrate/...
 
 integrate:
 	docker build --rm -t ${BUILD_IMAGE} build/contrib/builder/binary
@@ -66,6 +66,7 @@ build-local:
 	mv ${TARGET} build/bundles/${MAJOR_VERSION}/binary
 	@cd build/bundles/${MAJOR_VERSION}/binary && $(shell which md5sum) -b ${TARGET} | cut -d' ' -f1  > ${TARGET}.md5
 	cp configs/${CONFIG_FILE} build/bundles/${MAJOR_VERSION}/binary
+	cp build/bundles/${MAJOR_VERSION}/binary/${TARGET}  build/bundles/${MAJOR_VERSION}/binary/${TARGET_SIDECAR}
 
 build-linux32:
 	@rm -rf build/bundles/${MAJOR_VERSION}/binary
@@ -77,6 +78,7 @@ build-linux32:
 	mv ${TARGET} build/bundles/${MAJOR_VERSION}/binary
 	@cd build/bundles/${MAJOR_VERSION}/binary && $(shell which md5sum) -b ${TARGET} | cut -d' ' -f1  > ${TARGET}.md5
 	cp configs/${CONFIG_FILE} build/bundles/${MAJOR_VERSION}/binary
+	cp build/bundles/${MAJOR_VERSION}/binary/${TARGET}  build/bundles/${MAJOR_VERSION}/binary/${TARGET_SIDECAR}
 
 build-linux64:
 	@rm -rf build/bundles/${MAJOR_VERSION}/binary
@@ -88,13 +90,14 @@ build-linux64:
 	mv ${TARGET} build/bundles/${MAJOR_VERSION}/binary
 	@cd build/bundles/${MAJOR_VERSION}/binary && $(shell which md5sum) -b ${TARGET} | cut -d' ' -f1  > ${TARGET}.md5
 	cp configs/${CONFIG_FILE} build/bundles/${MAJOR_VERSION}/binary
+	cp build/bundles/${MAJOR_VERSION}/binary/${TARGET}  build/bundles/${MAJOR_VERSION}/binary/${TARGET_SIDECAR}
 
 
 image:
 	@rm -rf IMAGEBUILD
 	cp -r build/contrib/builder/image IMAGEBUILD && cp build/bundles/${MAJOR_VERSION}/binary/${TARGET} IMAGEBUILD && cp -r configs IMAGEBUILD && cp -r etc IMAGEBUILD
 	docker build --no-cache --rm -t ${IMAGE_NAME}:${MAJOR_VERSION}-${GIT_VERSION} IMAGEBUILD
-	docker tag ${IMAGE_NAME}:${MAJOR_VERSION}-${GIT_VERSION} ${REGISTRY}/${IMAGE_NAME}:${MAJOR_VERSION}-${GIT_VERSION}
+	docker tag ${IMAGE_NAME}:${MAJOR_VERSION}-${GIT_VERSION} ${REPOSITORY}:${MAJOR_VERSION}-${GIT_VERSION}
 	rm -rf IMAGEBUILD
 
 rpm:

@@ -20,17 +20,23 @@ package types
 import "time"
 
 type Span interface {
+	TraceId() string
+
+	SpanId() string
+
+	ParentSpanId() string
+
 	SetOperation(operation string)
 
 	SetTag(key string, value string)
 
 	FinishSpan()
 
-	InjectContext()
+	InjectContext(requestHeaders map[string]string)
 
-	SpawnChild() Span
+	SpawnChild(operationName string, startTime time.Time) Span
 }
 
-type Driver interface {
-	start(requestHeaders map[string]string, operationName string, startTime time.Time) Span
+type Tracer interface {
+	Start(startTime time.Time) Span
 }

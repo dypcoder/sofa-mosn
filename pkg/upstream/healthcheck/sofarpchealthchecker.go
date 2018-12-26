@@ -18,15 +18,13 @@
 package healthcheck
 
 import (
-	"math/rand"
-	"reflect"
-	"strconv"
+	"context"
 
-	"github.com/alipay/sofa-mosn/internal/api/v2"
+	"github.com/alipay/sofa-mosn/pkg/api/v2"
 	"github.com/alipay/sofa-mosn/pkg/log"
 	"github.com/alipay/sofa-mosn/pkg/protocol"
-	"github.com/alipay/sofa-mosn/pkg/protocol/sofarpc"
-	"github.com/alipay/sofa-mosn/pkg/protocol/sofarpc/codec"
+	"github.com/alipay/sofa-mosn/pkg/protocol/rpc"
+	"github.com/alipay/sofa-mosn/pkg/protocol/rpc/sofarpc"
 	"github.com/alipay/sofa-mosn/pkg/stream"
 	"github.com/alipay/sofa-mosn/pkg/types"
 )
@@ -34,7 +32,7 @@ import (
 type sofarpcHealthChecker struct {
 	healthChecker
 	//TODO set 'protocolCode' after service subscribe finished
-	protocolCode sofarpc.ProtocolType
+	protocolCode byte
 }
 
 func newSofaRPCHealthChecker(config v2.HealthCheck) *sofarpcHealthChecker {
@@ -46,7 +44,7 @@ func newSofaRPCHealthChecker(config v2.HealthCheck) *sofarpcHealthChecker {
 
 	// use bolt v1 as default sofa health check protocol
 	if 0 == config.ProtocolCode {
-		shc.protocolCode = sofarpc.BOLT_V1
+		shc.protocolCode = sofarpc.PROTOCOL_CODE_V1
 	}
 
 	shc.sessionFactory = shc
@@ -54,10 +52,10 @@ func newSofaRPCHealthChecker(config v2.HealthCheck) *sofarpcHealthChecker {
 	return shc
 }
 
-func newSofaRPCHealthCheckerWithBaseHealthChecker(hc *healthChecker, pro sofarpc.ProtocolType) *sofarpcHealthChecker {
+func newSofaRPCHealthCheckerWithBaseHealthChecker(hc *healthChecker, protocolCode byte) *sofarpcHealthChecker {
 	shc := &sofarpcHealthChecker{
 		healthChecker: *hc,
-		protocolCode:  pro,
+		protocolCode:  protocolCode,
 	}
 
 	shc.sessionFactory = shc
@@ -65,7 +63,7 @@ func newSofaRPCHealthCheckerWithBaseHealthChecker(hc *healthChecker, pro sofarpc
 	return shc
 }
 
-func (c *sofarpcHealthChecker) newSofaRPCHealthCheckSession(codecClinet stream.CodecClient, host types.Host) types.HealthCheckSession {
+func (c *sofarpcHealthChecker) newSofaRPCHealthCheckSession(codecClinet stream.Client, host types.Host) types.HealthCheckSession {
 	shcs := &sofarpcHealthCheckSession{
 		client:             codecClinet,
 		healthChecker:      c,
@@ -91,26 +89,32 @@ func (c *sofarpcHealthChecker) newSession(host types.Host) types.HealthCheckSess
 	return shcs
 }
 
-func (c *sofarpcHealthChecker) createCodecClient(data types.CreateConnectionData) stream.CodecClient {
-	return stream.NewCodecClient(nil, protocol.SofaRPC, data.Connection, data.HostInfo)
+func (c *sofarpcHealthChecker) createStreamClient(data types.CreateConnectionData) stream.Client {
+	return stream.NewStreamClient(context.Background(), protocol.SofaRPC, data.Connection, data.HostInfo)
 }
 
-// types.StreamReceiver
+// types.StreamReceiveListener
 type sofarpcHealthCheckSession struct {
 	healthCheckSession
 
-	client         stream.CodecClient
+	client         stream.Client
 	requestSender  types.StreamSender
 	responseStatus int16
 	healthChecker  *sofarpcHealthChecker
 	expectReset    bool
 }
 
-func (s *sofarpcHealthCheckSession) OnReceiveHeaders(headers map[string]string, endStream bool) {
+func (s *sofarpcHealthCheckSession) OnReceiveHeaders(context context.Context, headers types.HeaderMap, endStream bool) {
 	//bolt
 	//log.DefaultLogger.Debugf("BoltHealthCheck get heartbeat message")
-	if statusStr, ok := headers[sofarpc.SofaPropertyHeader(sofarpc.HeaderRespStatus)]; ok {
-		s.responseStatus = sofarpc.ConvertPropertyValue(statusStr, reflect.Int16).(int16)
+
+	switch resp := headers.(type) {
+	case rpc.RespStatus:
+		s.responseStatus = int16(resp.RespStatus())
+	case protocol.CommonHeader:
+		if statusStr, ok := headers.Get(sofarpc.SofaPropertyHeader(sofarpc.HeaderRespStatus)); ok {
+			s.responseStatus = sofarpc.ConvertPropertyValueInt16(statusStr)
+		}
 	}
 
 	if endStream {
@@ -118,17 +122,17 @@ func (s *sofarpcHealthCheckSession) OnReceiveHeaders(headers map[string]string, 
 	}
 }
 
-func (s *sofarpcHealthCheckSession) OnReceiveData(data types.IoBuffer, endStream bool) {
+func (s *sofarpcHealthCheckSession) OnReceiveData(context context.Context, data types.IoBuffer, endStream bool) {
 	if endStream {
 		s.onResponseComplete()
 	}
 }
 
-func (s *sofarpcHealthCheckSession) OnReceiveTrailers(trailers map[string]string) {
+func (s *sofarpcHealthCheckSession) OnReceiveTrailers(context context.Context, trailers types.HeaderMap) {
 	s.onResponseComplete()
 }
 
-func (s *sofarpcHealthCheckSession) OnDecodeError(err error, headers map[string]string) {
+func (s *sofarpcHealthCheckSession) OnDecodeError(context context.Context, err error, headers types.HeaderMap) {
 }
 
 // overload healthCheckSession
@@ -147,29 +151,24 @@ func (s *sofarpcHealthCheckSession) onInterval() {
 			return
 		}
 
-		s.client = s.healthChecker.createCodecClient(connData)
+		s.client = s.healthChecker.createStreamClient(connData)
 
 		s.expectReset = false
 	}
 
-	id := rand.Uint32()
-	reqID := strconv.Itoa(int(id))
-
-	s.requestSender = s.client.NewStream(reqID, s)
+	s.requestSender = s.client.NewStream(context.Background(), s)
 	s.requestSender.GetStream().AddEventListener(s)
 
-	//todo: support tr
 	//create protocol specified heartbeat packet
-	if s.healthChecker.protocolCode == sofarpc.BOLT_V1 {
-		reqHeaders := codec.NewBoltHeartbeat(id)
-
-		s.requestSender.AppendHeaders(reqHeaders, true)
-		log.DefaultLogger.Debugf("BoltHealthCheck Sending Heart Beat to %s,request id = %d", s.host.AddressString(), reqID)
+	hbPacket := sofarpc.NewHeartbeat(s.healthChecker.protocolCode)
+	if hbPacket != nil {
+		s.requestSender.AppendHeaders(context.Background(), hbPacket, true)
+		log.DefaultLogger.Debugf("SofaRpc HealthCheck Sending Heart Beat to %s", s.host.AddressString())
 		s.requestSender = nil
 		// start timeout interval
 		s.healthCheckSession.onInterval()
 	} else {
-		log.DefaultLogger.Errorf("For health check, only support bolt v1 currently")
+		log.DefaultLogger.Errorf("Unknown protocol code: [%x] while sending heartbeat for healthcheck.", s.healthChecker.protocolCode)
 	}
 }
 
@@ -199,6 +198,7 @@ func (s *sofarpcHealthCheckSession) isHealthCheckSucceeded() bool {
 	return s.responseStatus == sofarpc.RESPONSE_STATUS_SUCCESS
 }
 
+// types.StreamEventListener
 func (s *sofarpcHealthCheckSession) OnResetStream(reason types.StreamResetReason) {
 	if s.expectReset {
 		return
@@ -206,3 +206,5 @@ func (s *sofarpcHealthCheckSession) OnResetStream(reason types.StreamResetReason
 
 	s.handleFailure(types.FailureNetwork)
 }
+
+func (s *sofarpcHealthCheckSession) OnDestroyStream() {}

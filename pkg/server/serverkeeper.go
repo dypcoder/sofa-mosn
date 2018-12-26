@@ -27,6 +27,8 @@ import (
 	"time"
 
 	"github.com/alipay/sofa-mosn/pkg/log"
+	"github.com/alipay/sofa-mosn/pkg/stats"
+	"github.com/alipay/sofa-mosn/pkg/types"
 )
 
 func init() {
@@ -38,7 +40,7 @@ func init() {
 var (
 	pidFile               string
 	onProcessExit         []func()
-	gracefulTimeout       = time.Second * 30 //default 30s
+	GracefulTimeout       = time.Second * 30 //default 30s
 	shutdownCallbacksOnce sync.Once
 	shutdownCallbacks     []func() error
 )
@@ -85,6 +87,8 @@ func catchSignalsCrossPlatform() {
 				// reopen
 				log.Reopen()
 			case syscall.SIGHUP:
+				// stop stoppable before reload
+				stopStoppable()
 				// reload
 				reconfigure()
 			case syscall.SIGUSR2:
@@ -153,8 +157,8 @@ func reconfigure() {
 	}
 
 	// Set a flag for the new process start process
-	os.Setenv("_MOSN_GRACEFUL_RESTART", "true")
-	os.Setenv("_MOSN_INHERIT_FD", strconv.Itoa(len(listenerFD)))
+	os.Setenv(types.GracefulRestart, "true")
+	os.Setenv(types.InheritFd, strconv.Itoa(len(listenerFD)))
 
 	execSpec := &syscall.ProcAttr{
 		Env:   os.Environ(),
@@ -170,11 +174,16 @@ func reconfigure() {
 
 	log.DefaultLogger.Infof("SIGHUP received: fork-exec to %d", fork)
 
+	// Wait for new mosn start
+	time.Sleep(3 * time.Second)
+
 	// Stop accepting requests
 	StopAccept()
 
-	// Wait for all conections to be finished
-	WaitConnectionsDone(gracefulTimeout)
+	// Wait for all connections to be finished
+	WaitConnectionsDone(GracefulTimeout)
+	// Transfer metrcis data, non-block
+	stats.TransferMetrics(false, 0)
 	log.DefaultLogger.Infof("process %d gracefully shutdown", os.Getpid())
 
 	// Stop the old server, all the connections have been closed and the new one is running

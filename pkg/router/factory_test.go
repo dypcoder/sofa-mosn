@@ -18,53 +18,90 @@
 package router
 
 import (
-	"reflect"
 	"testing"
 
+	"github.com/alipay/sofa-mosn/pkg/api/v2"
 	"github.com/alipay/sofa-mosn/pkg/types"
 )
 
-func TestRegisterRouterConfigFactory(t *testing.T) {
-	type args struct {
-		port    types.Protocol
-		factory configFactory
-	}
-	tests := []struct {
-		name string
-		args args
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			RegisterRouterConfigFactory(tt.args.port, tt.args.factory)
-		})
-	}
+type mockRouteBase struct {
+	*RouteRuleImplBase
 }
 
-func TestCreateRouteConfig(t *testing.T) {
-	type args struct {
-		port   types.Protocol
-		config interface{}
-	}
-	tests := []struct {
-		name    string
-		args    args
-		want    types.Routers
-		wantErr bool
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := CreateRouteConfig(tt.args.port, tt.args.config)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("CreateRouteConfig() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("CreateRouteConfig() = %v, want %v", got, tt.want)
-			}
-		})
-	}
+func (r *mockRouteBase) Match(headers types.HeaderMap, randomValue uint64) types.Route {
+	return nil
 }
+func (r *mockRouteBase) Matcher() string {
+	return ""
+}
+func (r *mockRouteBase) MatchType() types.PathMatchType {
+	return 999
+}
+
+func _TestRouterRuleFactory(base *RouteRuleImplBase, headers []v2.HeaderMatcher) RouteBase {
+	return &mockRouteBase{base}
+}
+
+func _TestLowerRouterRuleFactory(base *RouteRuleImplBase, headers []v2.HeaderMatcher) RouteBase {
+	return nil
+}
+
+func resetRouteRuleFactory() {
+	defaultRouterRuleFactoryOrder.factory = DefaultSofaRouterRuleFactory
+	defaultRouterRuleFactoryOrder.order = 1
+}
+
+func TestRegisterRuleOrder(t *testing.T) {
+	testCases := []struct {
+		f     RouterRuleFactory
+		order uint32
+		check func(rb RouteBase) bool
+	}{
+		// Defaiult, register by init
+		{
+			f:     nil,
+			order: 0,
+			check: func(rb RouteBase) bool {
+				_, ok := rb.(*SofaRouteRuleImpl)
+				return ok
+			},
+		},
+		// Register higher order
+		{
+			f:     _TestRouterRuleFactory,
+			order: 2,
+			check: func(rb RouteBase) bool {
+				_, ok := rb.(*mockRouteBase)
+				return ok
+			},
+		},
+		// Register lower order, will failed
+		{
+			f:     _TestLowerRouterRuleFactory,
+			order: 1,
+			check: func(rb RouteBase) bool {
+				return rb != nil
+			},
+		},
+	}
+	base := &RouteRuleImplBase{}
+	headers := []v2.HeaderMatcher{
+		v2.HeaderMatcher{
+			Name:  types.SofaRouteMatchKey,
+			Value: "test",
+		},
+	}
+	for i, tc := range testCases {
+		if tc.f != nil {
+			RegisterRouterRule(tc.f, tc.order)
+		}
+		rb := defaultRouterRuleFactoryOrder.factory(base, headers)
+		if !tc.check(rb) {
+			t.Errorf("#%d register unexpected", i)
+		}
+	}
+	// Clear Register
+	resetRouteRuleFactory()
+}
+
+// HandlerChain Register test in handlerchain_test.go

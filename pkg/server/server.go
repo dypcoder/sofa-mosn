@@ -21,11 +21,11 @@ import (
 	"errors"
 	"os"
 	"runtime"
-	"sync"
 	"time"
 
-	"github.com/alipay/sofa-mosn/internal/api/v2"
+	"github.com/alipay/sofa-mosn/pkg/api/v2"
 	"github.com/alipay/sofa-mosn/pkg/log"
+	"github.com/alipay/sofa-mosn/pkg/network"
 	"github.com/alipay/sofa-mosn/pkg/types"
 )
 
@@ -50,25 +50,29 @@ func GetServer() Server {
 var servers []*server
 
 type server struct {
-	logger        log.Logger
-	stopChan      chan struct{}
-	handler       types.ConnectionHandler
-	ListenerInMap sync.Map
+	serverName string
+	logger     log.Logger
+	stopChan   chan struct{}
+	handler    types.ConnectionHandler
 }
 
 func NewServer(config *Config, cmFilter types.ClusterManagerFilter, clMng types.ClusterManager) Server {
-
 	procNum := runtime.NumCPU()
 
 	if config != nil {
 		//graceful timeout setting
 		if config.GracefulTimeout != 0 {
-			gracefulTimeout = config.GracefulTimeout
+			GracefulTimeout = config.GracefulTimeout
 		}
 
 		//processor num setting
 		if config.Processor > 0 {
 			procNum = config.Processor
+		}
+
+		network.UseNetpollMode = config.UseNetpollMode
+		if config.UseNetpollMode {
+			log.StartLogger.Infof("Netpoll mode enabled.")
 		}
 	}
 
@@ -77,45 +81,23 @@ func NewServer(config *Config, cmFilter types.ClusterManagerFilter, clMng types.
 	OnProcessShutDown(log.CloseAll)
 
 	server := &server{
-		logger:        log.DefaultLogger,
-		stopChan:      make(chan struct{}),
-		handler:       NewHandler(cmFilter, clMng, log.DefaultLogger),
-		ListenerInMap: sync.Map{},
+		serverName: config.ServerName,
+		logger:     log.DefaultLogger,
+		stopChan:   make(chan struct{}),
+		handler:    NewHandler(cmFilter, clMng, log.DefaultLogger),
 	}
+
+	initListenerAdapterInstance(server.serverName, server.handler)
 
 	servers = append(servers, server)
 
 	return server
 }
 
-func (srv *server) AddListener(lc *v2.ListenerConfig, networkFiltersFactory types.NetworkFilterChainFactory, streamFiltersFactories []types.StreamFilterChainFactory) {
-	if _, ok := srv.ListenerInMap.Load(lc.Name); ok {
-		log.DefaultLogger.Warnf("Listen Already Started, Listen = %+v", lc)
-	} else {
-		srv.ListenerInMap.Store(lc.Name, lc)
-		srv.handler.AddListener(lc, networkFiltersFactory, streamFiltersFactories)
-	}
-}
+func (srv *server) AddListener(lc *v2.Listener, networkFiltersFactories []types.NetworkFilterChainFactory,
+	streamFiltersFactories []types.StreamFilterChainFactory) (types.ListenerEventListener, error) {
 
-func (srv *server) AddListenerAndStart(lc *v2.ListenerConfig, networkFiltersFactory types.NetworkFilterChainFactory,
-	streamFiltersFactories []types.StreamFilterChainFactory) error {
-
-	if _, ok := srv.ListenerInMap.Load(lc.Name); ok {
-		log.DefaultLogger.Warnf("Listener Already Started, Listener Name = %+v", lc.Name)
-	} else {
-		srv.ListenerInMap.Store(lc.Name, lc)
-		al := srv.handler.AddListener(lc, networkFiltersFactory, streamFiltersFactories)
-
-		if activeListener, ok := al.(*activeListener); ok {
-			go activeListener.listener.Start(nil)
-		}
-	}
-
-	return nil
-}
-
-func (srv *server) AddOrUpdateListener(lc v2.ListenerConfig) {
-	// TODO: support add listener or update existing listener
+	return srv.handler.AddOrUpdateListener(lc, networkFiltersFactories, streamFiltersFactories)
 }
 
 func (srv *server) Start() {
@@ -142,6 +124,10 @@ func (srv *server) Close() {
 	close(srv.stopChan)
 }
 
+func (srv *server) Handler() types.ConnectionHandler {
+	return srv.handler
+}
+
 func Stop() {
 	for _, server := range servers {
 		server.Close()
@@ -154,6 +140,12 @@ func StopAccept() {
 	}
 }
 
+func StopConnection() {
+	for _, server := range servers {
+		server.handler.StopConnection()
+	}
+}
+
 func ListListenerFD() []uintptr {
 	var fds []uintptr
 	for _, server := range servers {
@@ -163,11 +155,17 @@ func ListListenerFD() []uintptr {
 }
 
 func WaitConnectionsDone(duration time.Duration) error {
-	timeout := time.NewTimer(duration)
-	wait := make(chan struct{})
+	// one duration wait for connection to active close
+	// two duration wait for connection to transfer
+	// 10 seconds wait for read timeout
+	timeout := time.NewTimer(duration*2 + time.Second*10)
+	wait := make(chan struct{}, 1)
+	time.Sleep(duration)
 	go func() {
 		//todo close idle connections and wait active connections complete
-		time.Sleep(duration * 2)
+		StopConnection()
+		log.DefaultLogger.Infof("StopConnection")
+		time.Sleep(duration + time.Second*10)
 		wait <- struct{}{}
 	}()
 

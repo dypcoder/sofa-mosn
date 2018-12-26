@@ -53,12 +53,14 @@ func init() {
 	//use console  as start logger
 	StartLogger = &logger{
 		Output:  "",
-		Level:   DEBUG,
+		Level:   INFO,
 		Roller:  DefaultRoller(),
 		fileMux: new(sync.RWMutex),
 	}
 
 	StartLogger.Start()
+	// default as start before Init
+	DefaultLogger = StartLogger
 }
 
 // Logger
@@ -190,6 +192,12 @@ func (l *logger) Printf(format string, args ...interface{}) {
 	l.fileMux.RLock()
 	l.Logger.Printf(format, args...)
 	l.fileMux.RUnlock()
+}
+
+func (l *logger) SetFlags(flag int) {
+	l.fileMux.RLock()
+	defer l.fileMux.RUnlock()
+	l.Logger.SetFlags(flag)
 }
 
 func (l *logger) Infof(format string, args ...interface{}) {

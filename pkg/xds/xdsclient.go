@@ -53,7 +53,6 @@ func duration2String(duration *types.Duration) string {
 	return x + "s"
 }
 
-
 // UnmarshalResources used in order to convert bootstrap_v2 json to pb struct (go-control-plane), some fields must be exchanged format
 func UnmarshalResources(config *config.MOSNConfig) (dynamicResources *bootstrap.Bootstrap_DynamicResources, staticResources *bootstrap.Bootstrap_StaticResources, err error) {
 
@@ -211,7 +210,11 @@ func (c *Client) Start(config *config.MOSNConfig, serviceCluster, serviceNode st
 			log.DefaultLogger.Warnf("fail to init xds config, skip xds: %v", err)
 			return errors.New("fail to init xds config")
 		}
-		c.v2 = &v2.ClientV2{serviceCluster, serviceNode, &xdsConfig}
+		c.v2 = &v2.ClientV2{
+			ServiceCluster: serviceCluster,
+			ServiceNode:    serviceNode,
+			Config:         &xdsConfig,
+		}
 	}
 
 	stopChan := make(chan int)
@@ -238,4 +241,3 @@ func (c *Client) Stop() {
 	c.adsClient.Stop()
 	log.DefaultLogger.Infof("xds client stop")
 }
-

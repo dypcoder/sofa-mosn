@@ -22,6 +22,7 @@ import (
 	"regexp"
 	"sort"
 
+	"github.com/alipay/sofa-mosn/pkg/api/v2"
 	"github.com/alipay/sofa-mosn/pkg/log"
 	"github.com/alipay/sofa-mosn/pkg/types"
 )
@@ -34,15 +35,18 @@ type configUtility struct {
 }
 
 // types.MatchHeaders
-func (cu *configUtility) MatchHeaders(requestHeaders map[string]string, configHeaders []*types.HeaderData) bool {
+func (cu *configUtility) MatchHeaders(requestHeaders types.HeaderMap, configHeaders []*types.HeaderData) bool {
 
 	// step 1: match name
 	// step 2: match value, if regex true, match pattern
-	for _, cfgHeaderData := range configHeaders {
+	log.DefaultLogger.Debugf("MatchHeaders, request headers are:%+v", requestHeaders)
+
+	for i, cfgHeaderData := range configHeaders {
 		cfgName := cfgHeaderData.Name.Get()
 		cfgValue := cfgHeaderData.Value
+		log.DefaultLogger.Debugf("MatchHeaders, router headers %d name : %s, value %s:  ", i, cfgName, cfgValue)
 
-		if value, ok := requestHeaders[cfgName]; ok {
+		if value, ok := requestHeaders.Get(cfgName); ok {
 
 			if !cfgHeaderData.IsRegex {
 				if cfgValue != value {
@@ -53,6 +57,8 @@ func (cu *configUtility) MatchHeaders(requestHeaders map[string]string, configHe
 					return false
 				}
 			}
+		} else {
+			return false
 		}
 	}
 
@@ -97,6 +103,14 @@ func (qpm *queryParameterMatcher) Matches(requestQueryParams types.QueryParams) 
 	return qpm.value == requestQueryValue
 }
 
+// NewConfigImpl return an configImpl instance contains requestHeadersParser and responseHeadersParser
+func NewConfigImpl(routerConfig *v2.RouterConfiguration) *configImpl {
+	return &configImpl{
+		requestHeadersParser:  getHeaderParser(routerConfig.RequestHeadersToAdd, nil),
+		responseHeadersParser: getHeaderParser(routerConfig.ResponseHeadersToAdd, routerConfig.ResponseHeadersToRemove),
+	}
+}
+
 // Implementation of Config that reads from a proto file.
 type configImpl struct {
 	name                  string
@@ -110,7 +124,7 @@ func (ci *configImpl) Name() string {
 	return ci.name
 }
 
-func (ci *configImpl) Route(headers map[string]string, randomValue uint64) types.Route {
+func (ci *configImpl) Route(headers types.HeaderMap, randomValue uint64) types.Route {
 	return ci.routeMatcher.Route(headers, randomValue)
 }
 
@@ -119,7 +133,7 @@ func (ci *configImpl) InternalOnlyHeaders() *list.List {
 }
 
 // NewMetadataMatchCriteriaImpl
-func NewMetadataMatchCriteriaImpl(metadataMatches map[string]interface{}) *MetadataMatchCriteriaImpl {
+func NewMetadataMatchCriteriaImpl(metadataMatches map[string]string) *MetadataMatchCriteriaImpl {
 
 	metadataMatchCriteriaImpl := &MetadataMatchCriteriaImpl{}
 	metadataMatchCriteriaImpl.extractMetadataMatchCriteria(nil, metadataMatches)
@@ -159,10 +173,9 @@ func (mmcti *MetadataMatchCriteriaImpl) Swap(i, j int) {
 
 // Used to generate metadata match criteria from config
 func (mmcti *MetadataMatchCriteriaImpl) extractMetadataMatchCriteria(parent *MetadataMatchCriteriaImpl,
-	metadataMatches map[string]interface{}) {
+	metadataMatches map[string]string) {
 
 	var mdMatchCriteria []types.MetadataMatchCriterion
-
 	// used to record key and its index for o(1) searching
 	var existingMap = make(map[string]uint32)
 
@@ -176,29 +189,21 @@ func (mmcti *MetadataMatchCriteriaImpl) extractMetadataMatchCriteria(parent *Met
 
 	// get from metadatamatch
 	for k, v := range metadataMatches {
+		mmci := &MetadataMatchCriterionImpl{
+			Name:  k,
+			Value: types.GenerateHashedValue(v),
+		}
 
-		if vs, ok := v.(string); ok {
-			mmci := &MetadataMatchCriterionImpl{
-				Name:  k,
-				Value: types.GenerateHashedValue(vs),
-			}
-
-			if index, ok := existingMap[k]; ok {
-
-				// update value
-				mdMatchCriteria[index] = mmci
-			} else {
-				// append
-				mdMatchCriteria = append(mdMatchCriteria, mmci)
-			}
-
+		if index, ok := existingMap[k]; ok {
+			// update value
+			mdMatchCriteria[index] = mmci
 		} else {
-			log.DefaultLogger.Errorf("Currently,metadata only support map[string]string type")
+			// append
+			mdMatchCriteria = append(mdMatchCriteria, mmci)
 		}
 	}
 
 	mmcti.MatchCriteriaArray = mdMatchCriteria
-
 	// sorting in lexically by name
 	sort.Sort(mmcti)
 }

@@ -19,10 +19,10 @@ package types
 
 import (
 	"context"
-	"io"
 	"net"
 
-	"github.com/alipay/sofa-mosn/internal/api/v2"
+	"github.com/alipay/sofa-mosn/pkg/api/v2"
+	"github.com/alipay/sofa-mosn/pkg/mtls/crypto/tls"
 	"github.com/rcrowley/go-metrics"
 )
 
@@ -43,7 +43,7 @@ import (
 //   Core model in network layer are listener and connection. Listener listens specified port, waiting for new connections.
 //   Both listener and connection have a extension mechanism, implemented as listener and filter chain, which are used to fill in customized logic.
 //   Event listeners are used to subscribe important event of Listener and Connection. Method in listener will be called on event occur, but not effect the control flow.
-//   Filters are called on event occurs, it also returns a status to effect control flow. Currently 2 states are used: Continue to let it go, StopIteration to stop the control flow.
+//   Filters are called on event occurs, it also returns a status to effect control flow. Currently 2 states are used: Continue to let it go, Stop to stop the control flow.
 //   Filter has a callback handler to interactive with core model. For example, ReadFilterCallbacks can be used to continue filter chain in connection, on which is in a stopped state.
 //
 //   Listener:
@@ -66,7 +66,7 @@ import (
 //   |         |                   |       				|
 //   |        1|     1      *      |1          			|
 // 	 |	    Listener --------- Connection      			|
-//   |        1|      [accpet]     |1          			|
+//   |        1|      [accept]     |1          			|
 //	 |         |                   |-----------         |
 //   |        *|                   |*          |*       |
 //   |	 ListenerFilter       ReadFilter  WriteFilter   |
@@ -74,13 +74,14 @@ import (
 //    --------------------------------------------------
 //
 
-// The prefix
-const (
-	ListenerStatsPrefix = "listener.%d."
-)
-
 // Listener is a wrapper of tcp listener
 type Listener interface {
+	// Return config which initialize this listener
+	Config() *v2.Listener
+
+	// Set listener config
+	SetConfig(config *v2.Listener)
+
 	// Name returns the listener's name
 	Name() string
 
@@ -92,10 +93,13 @@ type Listener interface {
 
 	// Stop stops listener
 	// Accepted connections and listening sockets will not be closed
-	Stop()
+	Stop() error
 
-	// ListenerTag returns the listener's tag
+	// ListenerTag returns the listener's tag, whichi the listener should use for connection handler tracking.
 	ListenerTag() uint64
+
+	// Set listener tag
+	SetListenerTag(tag uint64)
 
 	// ListenerFD returns a copy a listener fd
 	ListenerFD() (uintptr, error)
@@ -103,8 +107,20 @@ type Listener interface {
 	// PerConnBufferLimitBytes returns the limit bytes per connection
 	PerConnBufferLimitBytes() uint32
 
+	// Set limit bytes per connection
+	SetPerConnBufferLimitBytes(limitBytes uint32)
+
+	// Set if listener should hand off restored destination connections
+	SetHandOffRestoredDestinationConnections(restoredDestation bool)
+
+	// Get if listener hand off restored destination connections
+	HandOffRestoredDestinationConnections() bool
+
 	// SetListenerCallbacks set a listener event listener
 	SetListenerCallbacks(cb ListenerEventListener)
+
+	// GetListenerCallbacks set a listener event listener
+	GetListenerCallbacks() ListenerEventListener
 
 	// Close closes listener, not closing connections
 	Close(lctx context.Context) error
@@ -112,14 +128,15 @@ type Listener interface {
 
 //
 type TLSContextManager interface {
-	Conn(c net.Conn) net.Conn
+	Conn(net.Conn) net.Conn
 	Enabled() bool
+	Config() *tls.Config
 }
 
 // ListenerEventListener is a Callback invoked by a listener.
 type ListenerEventListener interface {
 	// OnAccept is called on new connection accepted
-	OnAccept(rawc net.Conn, handOffRestoredDestinationConnections bool, oriRemoteAddr net.Addr)
+	OnAccept(rawc net.Conn, handOffRestoredDestinationConnections bool, oriRemoteAddr net.Addr, c chan Connection, buf []byte)
 
 	// OnNewConnection is called on new mosn connection created
 	OnNewConnection(ctx context.Context, conn Connection)
@@ -133,8 +150,8 @@ type FilterStatus string
 
 // FilterStatus types
 const (
-	Continue      FilterStatus = "Continue"
-	StopIteration FilterStatus = "StopIteration"
+	Continue FilterStatus = "Continue"
+	Stop     FilterStatus = "Stop"
 )
 
 type ListenerFilter interface {
@@ -149,111 +166,14 @@ type ListenerFilterCallbacks interface {
 
 	ContinueFilterChain(ctx context.Context, success bool)
 
-	// SetOrigingalAddr sets the original ip and port
-	SetOrigingalAddr(ip string, port int)
+	// SetOriginalAddr sets the original ip and port
+	SetOriginalAddr(ip string, port int)
 }
 
 // ListenerFilterManager manages the listener filter
 // Note: unsupport now
 type ListenerFilterManager interface {
 	AddListenerFilter(lf *ListenerFilter)
-}
-
-type IoBuffer interface {
-	// Read reads the next len(p) bytes from the buffer or until the buffer
-	// is drained. The return value n is the number of bytes read. If the
-	// buffer has no data to return, err is io.EOF (unless len(p) is zero);
-	// otherwise it is nil.
-	Read(p []byte) (n int, err error)
-
-	// ReadOnce make a one-shot read and appends it to the buffer, growing
-	// the buffer as needed. The return value n is the number of bytes read. Any
-	// error except io.EOF encountered during the read is also returned. If the
-	// buffer becomes too large, ReadFrom will panic with ErrTooLarge.
-	ReadOnce(r io.Reader) (n int64, err error)
-
-	// ReadFrom reads data from r until EOF and appends it to the buffer, growing
-	// the buffer as needed. The return value n is the number of bytes read. Any
-	// error except io.EOF encountered during the read is also returned. If the
-	// buffer becomes too large, ReadFrom will panic with ErrTooLarge.
-	ReadFrom(r io.Reader) (n int64, err error)
-
-	// Write appends the contents of p to the buffer, growing the buffer as
-	// needed. The return value n is the length of p; err is always nil. If the
-	// buffer becomes too large, Write will panic with ErrTooLarge.
-	Write(p []byte) (n int, err error)
-
-	// WriteTo writes data to w until the buffer is drained or an error occurs.
-	// The return value n is the number of bytes written; it always fits into an
-	// int, but it is int64 to match the io.WriterTo interface. Any error
-	// encountered during the write is also returned.
-	WriteTo(w io.Writer) (n int64, err error)
-
-	// Peek returns n bytes from buffer, without draining any buffered data.
-	// If n > readable buffer, nil will be returned.
-	// It can be used in codec to check first-n-bytes magic bytes
-	// Note: do not change content in return bytes, use write instead
-	Peek(n int) []byte
-
-	// Bytes returns all bytes from buffer, without draining any buffered data.
-	// It can be used to get fixed-length content, such as headers, body.
-	// Note: do not change content in return bytes, use write instead
-	Bytes() []byte
-
-	// Drain drains a offset length of bytes in buffer.
-	// It can be used with Bytes(), after consuming a fixed-length of data
-	Drain(offset int)
-
-	// Len returns the number of bytes of the unread portion of the buffer;
-	// b.Len() == len(b.Bytes()).
-	Len() int
-
-	// Cap returns the capacity of the buffer's underlying byte slice, that is, the
-	// total space allocated for the buffer's data.
-	Cap() int
-
-	// Reset resets the buffer to be empty,
-	// but it retains the underlying storage for use by future writes.
-	Reset()
-
-	// Clone makes a copy of IoBuffer struct
-	Clone() IoBuffer
-
-	// String returns the contents of the unread portion of the buffer
-	// as a string. If the Buffer is a nil pointer, it returns "<nil>".
-	String() string
-}
-
-type BufferWatermarkListener interface {
-	OnHighWatermark()
-
-	OnLowWatermark()
-}
-
-// HeadersBufferPool is a buffer pool to reuse header map.
-// Normally recreate a map has minor cpu/memory cost, however in a high concurrent scenario, a buffer pool is needed to recycle map
-type HeadersBufferPool interface {
-	// Take finds and returns a map from buffer pool. If no buffer available, create a new one with capacity.
-	Take(capacity int) map[string]string
-
-	// Give returns a map to buffer pool
-	Give(amap map[string]string)
-}
-
-type GenericMapPool interface {
-	// Take finds and returns a map from map pool.
-	Take(defaultSize int) (amap map[string]interface{})
-
-	// Give returns a map to map pool
-	Give(amap map[string]interface{})
-}
-
-// ObjectBufferPool is a object pool.
-type ObjectBufferPool interface {
-	// Take returns a pool object, such as sync.Pool.
-	Take() interface{}
-	// Give set a pool object into pool.
-	Give(object interface{})
 }
 
 // Connection status
@@ -319,13 +239,13 @@ type Connection interface {
 	SetRemoteAddr(address net.Addr)
 
 	// AddConnectionEventListener add a listener method will be called when connection event occur.
-	AddConnectionEventListener(cb ConnectionEventListener)
+	AddConnectionEventListener(listener ConnectionEventListener)
 
 	// AddBytesReadListener add a method will be called everytime bytes read
-	AddBytesReadListener(cb func(bytesRead uint64))
+	AddBytesReadListener(listener func(bytesRead uint64))
 
 	// AddBytesSentListener add a method will be called everytime bytes write
-	AddBytesSentListener(cb func(bytesSent uint64))
+	AddBytesSentListener(listener func(bytesSent uint64))
 
 	// NextProtocol returns network level negotiation, such as ALPN. Returns empty string if not supported.
 	NextProtocol() string
@@ -376,10 +296,10 @@ type Connection interface {
 
 // ConnectionStats is a group of connection metrics
 type ConnectionStats struct {
-	ReadTotal    metrics.Counter
-	ReadCurrent  metrics.Gauge
-	WriteTotal   metrics.Counter
-	WriteCurrent metrics.Gauge
+	ReadTotal     metrics.Counter
+	ReadBuffered  metrics.Gauge
+	WriteTotal    metrics.Counter
+	WriteBuffered metrics.Gauge
 }
 
 // ClientConnection is a wrapper of Connection
@@ -427,9 +347,11 @@ type ConnectionHandler interface {
 	// NumConnections reports the connections that ConnectionHandler keeps.
 	NumConnections() uint64
 
-	// AddListener adds a listener into the ConnectionHandler
-	AddListener(lc *v2.ListenerConfig, networkFiltersFactory NetworkFilterChainFactory,
-		streamFiltersFactories []StreamFilterChainFactory) ListenerEventListener
+	// AddOrUpdateListener
+	// adds a listener into the ConnectionHandler or
+	// update a listener
+	AddOrUpdateListener(lc *v2.Listener, networkFiltersFactories []NetworkFilterChainFactory,
+		streamFiltersFactories []StreamFilterChainFactory) (ListenerEventListener, error)
 
 	// StartListener starts a listener by the specified listener tag
 	StartListener(lctx context.Context, listenerTag uint64)
@@ -440,18 +362,24 @@ type ConnectionHandler interface {
 	// FindListenerByAddress finds and returns a listener by the specified network address
 	FindListenerByAddress(addr net.Addr) Listener
 
-	// RemoveListeners find and removes a listener by the specified listener tag.
-	RemoveListeners(listenerTag uint64)
+	// FindListenerByName finds and returns a listener by the listener name
+	FindListenerByName(name string) Listener
 
-	// StopListener stops a listener  by the specified listener tag.
-	StopListener(lctx context.Context, listenerTag uint64)
+	// RemoveListeners find and removes a listener by listener name.
+	RemoveListeners(name string)
+
+	// StopListener stops a listener  by listener name
+	StopListener(lctx context.Context, name string, stop bool) error
 
 	// StopListeners stops all listeners the ConnectionHandler has.
 	// The close indicates whether the listening sockets will be closed.
-	StopListeners(lctx context.Context, close bool)
+	StopListeners(lctx context.Context, close bool) error
 
 	// ListListenersFD reports all listeners' fd
 	ListListenersFD(lctx context.Context) []uintptr
+
+	// StopConnection Stop Connection
+	StopConnection()
 }
 
 // ReadFilter is a connection binary read filter, registered by FilterManager.AddReadFilter
@@ -508,7 +436,7 @@ type FilterManager interface {
 	OnRead()
 
 	// OnWrite is called before data write
-	OnWrite() FilterStatus
+	OnWrite(buffer []IoBuffer) FilterStatus
 }
 
 type FilterChainFactory interface {
@@ -517,11 +445,15 @@ type FilterChainFactory interface {
 	CreateListenerFilterChain(listener ListenerFilterManager)
 }
 
-// NetworkFilterFactoryCb is a callback function used in network filter factory
-type NetworkFilterFactoryCb func(manager FilterManager)
+// NetWorkFilterChainFactoryCallbacks is a wrapper of FilterManager that called in NetworkFilterChainFactory
+type NetWorkFilterChainFactoryCallbacks interface {
+	AddReadFilter(rf ReadFilter)
+	AddWriteFilter(wf WriteFilter)
+}
 
+// NetworkFilterChainFactory adds filter into NetWorkFilterChainFactoryCallbacks
 type NetworkFilterChainFactory interface {
-	CreateFilterFactory(context context.Context, clusterManager ClusterManager) NetworkFilterFactoryCb
+	CreateFilterChain(context context.Context, clusterManager ClusterManager, callbacks NetWorkFilterChainFactoryCallbacks)
 }
 
 // Addresses defines a group of network address

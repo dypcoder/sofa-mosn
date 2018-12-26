@@ -18,33 +18,74 @@
 package router
 
 import (
-	"fmt"
+	"context"
 
+	"github.com/alipay/sofa-mosn/pkg/api/v2"
+	"github.com/alipay/sofa-mosn/pkg/log"
 	"github.com/alipay/sofa-mosn/pkg/types"
 )
 
-type configFactory func(config interface{}) (types.Routers, error)
+func init() {
+	RegisterRouterRule(DefaultSofaRouterRuleFactory, 1)
+	RegisterMakeHandlerChain(DefaultMakeHandlerChain, 1)
+}
 
-var routerConfigFactories map[types.Protocol]configFactory
+var defaultRouterRuleFactoryOrder routerRuleFactoryOrder
 
-// RegisterRouterConfigFactory
-// register router config factory for protocol
-func RegisterRouterConfigFactory(port types.Protocol, factory configFactory) {
-	if routerConfigFactories == nil {
-		routerConfigFactories = make(map[types.Protocol]configFactory)
-	}
-
-	if _, ok := routerConfigFactories[port]; !ok {
-		routerConfigFactories[port] = factory
+func RegisterRouterRule(f RouterRuleFactory, order uint32) {
+	if defaultRouterRuleFactoryOrder.order < order {
+		log.DefaultLogger.Infof("register router rule, order %d", order)
+		defaultRouterRuleFactoryOrder.factory = f
+		defaultRouterRuleFactoryOrder.order = order
+	} else {
+		log.DefaultLogger.Warnf("current register order is %d, order %d register failed", defaultRouterRuleFactoryOrder.order, order)
 	}
 }
 
-// CreateRouteConfig
-// return route factory according to protocol as input
-func CreateRouteConfig(port types.Protocol, config interface{}) (types.Routers, error) {
-	if factory, ok := routerConfigFactories[port]; ok {
-		return factory(config) //call NewBasicRoute
+func DefaultSofaRouterRuleFactory(base *RouteRuleImplBase, headers []v2.HeaderMatcher) RouteBase {
+	for _, header := range headers {
+		if header.Name == types.SofaRouteMatchKey {
+			return &SofaRouteRuleImpl{
+				RouteRuleImplBase: base,
+				matchValue:        header.Value,
+			}
+		}
 	}
+	return nil
+}
 
-	return nil, fmt.Errorf("Unsupported protocol %s", port)
+var makeHandlerChainOrder handlerChainOrder
+
+func RegisterMakeHandlerChain(f MakeHandlerChain, order uint32) {
+	if makeHandlerChainOrder.order < order {
+		log.DefaultLogger.Infof("register make handler chain, order %d", order)
+		makeHandlerChainOrder.makeHandlerChain = f
+		makeHandlerChainOrder.order = order
+	} else {
+		log.DefaultLogger.Warnf("current register order is %d, order %d register failed", makeHandlerChainOrder.order, order)
+	}
+}
+
+type simpleHandler struct {
+	route types.Route
+}
+
+func (h *simpleHandler) IsAvailable(ctx context.Context, snapshot types.ClusterSnapshot) types.HandlerStatus {
+	return types.HandlerAvailable
+}
+
+func (h *simpleHandler) Route() types.Route {
+	return h.route
+}
+
+func DefaultMakeHandlerChain(headers types.HeaderMap, routers types.Routers, clusterManager types.ClusterManager) *RouteHandlerChain {
+	var handlers []types.RouteHandler
+	if r := routers.Route(headers, 1); r != nil {
+		handlers = append(handlers, &simpleHandler{route: r})
+	}
+	return NewRouteHandlerChain(context.Background(), clusterManager, handlers)
+}
+
+func CallMakeHandlerChain(headers types.HeaderMap, routers types.Routers, clusterManager types.ClusterManager) *RouteHandlerChain {
+	return makeHandlerChainOrder.makeHandlerChain(headers, routers, clusterManager)
 }

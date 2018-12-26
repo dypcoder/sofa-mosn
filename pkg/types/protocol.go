@@ -37,50 +37,66 @@ import (
 //	 Stream layer leverages protocol's ability to do binary-model conversation. In detail, Stream uses Protocols's encode/decode facade method and DecodeFilter to receive decode event call.
 //
 
-// TODO: support error case: add error as return value in EncodeX method; add OnError(error) in DecodeFilter @wugou
-
 type Protocol string
 
-// Protocols is a protocols' facade used by Stream
-type Protocols interface {
-	// Encoder is a encoder interface to extend various of protocols
-	Encoder
-	// Decode decodes data to headers-data-trailers by Stream
-	// Stream register a DecodeFilter to receive decode event
-	Decode(context context.Context, data IoBuffer, filter DecodeFilter)
+// HeaderMap is a interface to provide operation facade with user-value headers
+type HeaderMap interface {
+	// Get value of key
+	Get(key string) (string, bool)
+
+	// Set key-value pair in header map, the previous pair will be replaced if exists
+	Set(key, value string)
+
+	// Del delete pair of specified key
+	Del(key string)
+
+	// Range calls f sequentially for each key and value present in the map.
+	// If f returns false, range stops the iteration.
+	Range(f func(key, value string) bool)
+
+	// Clone used to deep copy header's map
+	Clone() HeaderMap
+
+	// ByteSize return size of HeaderMap
+	ByteSize() uint64
 }
 
-// DecodeFilter is a filter used by Stream to receive decode events
-type DecodeFilter interface {
-	// OnDecodeHeader is called on headers decoded
-	OnDecodeHeader(streamID string, headers map[string]string) FilterStatus
+// ProtocolEngine is a protocols' facade used by Stream, it provides
+// auto protocol detection by the first byte recognition(called protocol code)
+type ProtocolEngine interface {
+	// Encoder is a encoder interface to extend various of protocols
+	Encoder
+	// Decoder is a decoder interface to extend various of protocols
+	Decoder
+	// Build Span
+	SpanBuilder
 
-	// OnDecodeData is called on data decoded
-	OnDecodeData(streamID string, data IoBuffer) FilterStatus
-
-	// OnDecodeTrailer is called on trailers decoded
-	OnDecodeTrailer(streamID string, trailers map[string]string) FilterStatus
-
-	// OnDecodeError is called when error occurs
-	// When error occurring, filter status = stop
-	OnDecodeError(err error, headers map[string]string)
+	// Register encoder and decoder for the specified protocol code
+	// TODO: use recognize interface instead of protocol code
+	Register(protocolCode byte, encoder Encoder, decoder Decoder, spanBuilder SpanBuilder) error
 }
 
 // Encoder is a encoder interface to extend various of protocols
 type Encoder interface {
-	// EncodeHeaders encodes the headers based on it's protocol
-	EncodeHeaders(context context.Context, headers interface{}) (IoBuffer, error)
+	// Encode encodes a model to binary data
+	// return 1. encoded bytes 2. encode error
+	Encode(ctx context.Context, model interface{}) (IoBuffer, error)
 
-	// EncodeData encodes the data based on it's protocol
-	EncodeData(context context.Context, data IoBuffer) IoBuffer
-
-	// EncodeTrailers encodes the trailers based on it's protocol
-	EncodeTrailers(context context.Context, trailers map[string]string) IoBuffer
+	// EncodeTo encodes a model to binary data, and append into the given buffer
+	// This method should be used in term of performance
+	// return 1. encoded bytes number 2. encode error
+	//EncodeTo(ctx context.Context, model interface{}, buf IoBuffer) (int, error)
 }
 
 // Decoder is a decoder interface to extend various of protocols
 type Decoder interface {
-	// Decode decodes binary to a model
-	// return 1. bytes decoded 2. decoded cmd
-	Decode(context context.Context, data IoBuffer) (interface{}, error)
+	// Decode decodes binary data to a model
+	// pass sub protocol type to identify protocol format
+	// return 1. decoded model(nil if no enough data) 2. decode error
+	Decode(ctx context.Context, data IoBuffer) (interface{}, error)
+}
+
+// Build the span for a specific protocol
+type SpanBuilder interface {
+	BuildSpan(args ...interface{}) Span
 }

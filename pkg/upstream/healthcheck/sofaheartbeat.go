@@ -20,8 +20,7 @@ package healthcheck
 import (
 	"time"
 
-	"github.com/alipay/sofa-mosn/internal/api/v2"
-	"github.com/alipay/sofa-mosn/pkg/protocol/sofarpc"
+	"github.com/alipay/sofa-mosn/pkg/api/v2"
 	"github.com/alipay/sofa-mosn/pkg/stream"
 	"github.com/alipay/sofa-mosn/pkg/types"
 	"github.com/alipay/sofa-mosn/pkg/upstream/cluster"
@@ -30,22 +29,21 @@ import (
 // StartSofaHeartBeat use for hearth-beat starting for sofa bolt in the same codecClient
 // for bolt heartbeat, timeout: 90s interval: 15s
 func StartSofaHeartBeat(timeout time.Duration, interval time.Duration, hostAddr string,
-	codecClient stream.CodecClient, nameHB string, pro sofarpc.ProtocolType) types.HealthCheckSession {
+	codecClient stream.Client, nameHB string, protocolCode byte) types.HealthCheckSession {
 
 	hcV2 := v2.HealthCheck{
-		Timeout:     timeout,
-		Interval:    interval,
-		ServiceName: nameHB,
+		Timeout:  timeout,
+		Interval: interval,
 	}
+	hcV2.ServiceName = nameHB
 
-	hostV2 := v2.Host{
-		Address: hostAddr,
-	}
+	hostV2 := v2.Host{}
+	hostV2.Address = hostAddr
 
 	host := cluster.NewHost(hostV2, nil)
 	baseHc := newHealthChecker(hcV2)
 
-	hc := newSofaRPCHealthCheckerWithBaseHealthChecker(baseHc, pro)
+	hc := newSofaRPCHealthCheckerWithBaseHealthChecker(baseHc, protocolCode)
 	hcs := hc.newSofaRPCHealthCheckSession(codecClient, host)
 	hcs.Start()
 

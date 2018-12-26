@@ -5,3 +5,6 @@ build/bundles/
 *.log
 IMAGEBUILD/
 coverage.txt
+mosnd
+main
+mosnd.md5

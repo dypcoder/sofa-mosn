@@ -55,7 +55,7 @@ func (filter *originalDst) OnAccept(cb types.ListenerFilterCallbacks) types.Filt
 
 	__tl.Print("ips:", ips)
 
-	cb.SetOrigingalAddr(ips, port)
+	cb.SetOriginalAddr(ips, port)
 
 	return types.Continue
 }
@@ -68,9 +68,14 @@ func getOriginalAddr(conn net.Conn) ([]byte, int, error) {
 		log.StartLogger.Println("get conn file error, err:", err)
 		return nil, 0, errors.New("conn has error")
 	}
+	defer f.Close()
 
 	fd := int(f.Fd())
 	addr, err := syscall.GetsockoptIPv6Mreq(fd, syscall.IPPROTO_IP, SO_ORIGINAL_DST)
+
+	if err := syscall.SetNonblock(fd, true); err != nil {
+		return nil, 0, fmt.Errorf("setnonblock %v", err)
+	}
 
 	p0 := int(addr.Multiaddr[2])
 	p1 := int(addr.Multiaddr[3])

@@ -57,6 +57,9 @@ type RequestInfo interface {
 	// StartTime returns the time that request arriving
 	StartTime() time.Time
 
+	// SetStartTime sets StartTime
+	SetStartTime()
+
 	// RequestReceivedDuration returns duration between request arriving and request resend to upstream
 	RequestReceivedDuration() time.Duration
 
@@ -86,6 +89,9 @@ type RequestInfo interface {
 
 	// ResponseCode reports the request's response code
 	ResponseCode() uint32
+
+	// SetResponseCode set request's response code
+	SetResponseCode(code uint32)
 
 	// Duration reports the duration since request's starting time
 	Duration() time.Duration

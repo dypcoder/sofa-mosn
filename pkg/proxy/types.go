@@ -39,12 +39,6 @@ type UpstreamCallbacks interface {
 	types.ConnectionEventListener
 }
 
-// DownstreamCallbacks
-// callback invoked when downstream event happened
-type DownstreamCallbacks interface {
-	types.ConnectionEventListener
-}
-
 // Timeout
 type Timeout struct {
 	GlobalTimeout time.Duration
@@ -71,3 +65,16 @@ const (
 	UpstreamGlobalTimeout UpstreamResetType = "UpstreamGlobalTimeout"
 	UpstreamPerTryTimeout UpstreamResetType = "UpstreamPerTryTimeout"
 )
+
+func init() {
+	ConnNewPoolFactories = make(map[types.Protocol]connNewPool)
+}
+
+type connNewPool func(host types.Host) types.ConnectionPool
+
+var ConnNewPoolFactories map[types.Protocol]connNewPool
+
+func RegisterNewPoolFactory(protocol types.Protocol, factory connNewPool) {
+	//other
+	ConnNewPoolFactories[protocol] = factory
+}

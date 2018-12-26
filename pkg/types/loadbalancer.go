@@ -49,7 +49,7 @@ type LoadBalancerContext interface {
 	DownstreamConnection() net.Conn
 
 	// DownstreamHeaders returns the downstream headers map.
-	DownstreamHeaders() map[string]string
+	DownstreamHeaders() HeaderMap
 }
 
 // SubSetLoadBalancer is a subset of LoadBalancer
@@ -69,7 +69,7 @@ type SubSetLoadBalancer interface {
 	HostMatches(kvs SubsetMetadata, host Host) bool
 
 	// FindSubset iterates over the given metadata match criteria (which must be lexically sorted by key) and find
-	// a matching LbSubsetEnryPtr, if any.
+	// a matching LbSubsetEntryPtr, if any.
 	FindSubset(matches []MetadataMatchCriterion) LBSubsetEntry
 
 	// FindOrCreateSubset recursively finds the matching LbSubsetEntry by a vector of key-values (from extractSubsetMetadata)

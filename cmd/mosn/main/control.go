@@ -18,8 +18,15 @@
 package main
 
 import (
+	"fmt"
+	"net/http"
+	_ "net/http/pprof"
+
+	"github.com/alipay/sofa-mosn/pkg/admin"
 	"github.com/alipay/sofa-mosn/pkg/config"
-	"github.com/alipay/sofa-mosn/cmd/mosn"
+	"github.com/alipay/sofa-mosn/pkg/log"
+	"github.com/alipay/sofa-mosn/pkg/mosn"
+	"github.com/alipay/sofa-mosn/pkg/server"
 	"github.com/urfave/cli"
 )
 
@@ -48,6 +55,23 @@ var (
 			serviceCluster := c.String("service-cluster")
 			serviceNode := c.String("service-node")
 			conf := config.Load(configPath)
+			// start admin server
+			adminServer := admin.Server{}
+			adminServer.Start(conf)
+			// start pprof
+			if conf.Debug.StartDebug {
+				port := 9090 //default use 9090
+				if conf.Debug.Port != 0 {
+					port = conf.Debug.Port
+				}
+				addr := fmt.Sprintf("0.0.0.0:%d", port)
+				go func() {
+					log.StartLogger.Infof("start a pprof server %s", addr)
+					s := &http.Server{Addr: addr, Handler: nil}
+					server.AddStoppable(s)
+					s.ListenAndServe()
+				}()
+			}
 			mosn.Start(conf, serviceCluster, serviceNode)
 			return nil
 		},

@@ -18,7 +18,7 @@
 package types
 
 import (
-	"github.com/alipay/sofa-mosn/internal/api/v2"
+	"github.com/alipay/sofa-mosn/pkg/api/v2"
 )
 
 // FailureType is the type of a failure
@@ -64,10 +64,7 @@ type HealthCheckSession interface {
 	SetUnhealthy(fType FailureType)
 }
 
-type HealthCheckHostMonitor interface {
-}
-
-// TODO: move facotry instance to a factory package
+// TODO: move factory instance to a factory package
 
 var HealthCheckFactoryInstance HealthCheckerFactory
 

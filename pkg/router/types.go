@@ -21,18 +21,27 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alipay/sofa-mosn/internal/api/v2"
-	"github.com/alipay/sofa-mosn/pkg/log"
+	"github.com/alipay/sofa-mosn/pkg/api/v2"
 	"github.com/alipay/sofa-mosn/pkg/types"
 )
 
+type headerFormatter interface {
+	format(requestInfo types.RequestInfo) string
+	append() bool
+}
+
+type headerPair struct {
+	headerName      *lowerCaseString
+	headerFormatter headerFormatter
+}
+
 type headerParser struct {
-	headersToAdd    []types.Pair
+	headersToAdd    []*headerPair
 	headersToRemove []*lowerCaseString
 }
 
 type matchable interface {
-	Match(headers map[string]string, randomValue uint64) types.Route
+	Match(headers types.HeaderMap, randomValue uint64) types.Route
 }
 
 type info interface {
@@ -42,6 +51,7 @@ type info interface {
 type RouteBase interface {
 	types.Route
 	types.RouteRule
+	types.PathMatchCriterion
 	matchable
 	info
 }
@@ -80,20 +90,6 @@ type hashPolicyImpl struct {
 }
 
 type hashMethod struct {
-}
-
-type decoratorImpl struct {
-	Operation string
-}
-
-func (di *decoratorImpl) apply(span types.Span) {
-	if di.Operation != "" {
-		span.SetOperation(di.Operation)
-	}
-}
-
-func (di *decoratorImpl) getOperation() string {
-	return di.Operation
 }
 
 type rateLimitPolicyImpl struct {
@@ -157,10 +153,15 @@ func (rpei *rateLimitPolicyEntryImpl) PopulateDescriptors(route types.RouteRule,
 type rateLimitAction interface{}
 
 type weightedClusterEntry struct {
+	clusterName                  string
 	runtimeKey                   string
 	loader                       types.Loader
-	clusterWeight                uint64
+	clusterWeight                uint32
 	clusterMetadataMatchCriteria *MetadataMatchCriteriaImpl
+}
+
+func (wc *weightedClusterEntry) GetClusterMetadataMatchCriteria() *MetadataMatchCriteriaImpl {
+	return wc.clusterMetadataMatchCriteria
 }
 
 type routerPolicy struct {
@@ -197,43 +198,20 @@ func (p *routerPolicy) LoadBalancerPolicy() types.LoadBalancerPolicy {
 	return nil
 }
 
-// GetClusterMosnLBMetaDataMap from v2.Metadata
-// e.g. metadata =  { "filter_metadata": {"mosn.lb": { "label": "gray"  } } }
-// 4-tier map
-func GetClusterMosnLBMetaDataMap(metadata v2.Metadata) types.RouteMetaData {
-	metadataMap := make(map[string]types.HashedValue)
+// RouterRuleFactory creates a RouteBase
+type RouterRuleFactory func(base *RouteRuleImplBase, header []v2.HeaderMatcher) RouteBase
 
-	if metadataInterface, ok := metadata[types.RouterMetadataKey]; ok {
-		if value, ok := metadataInterface.(map[string]interface{}); ok {
-			if mosnLbInterface, ok := value[types.RouterMetadataKeyLb]; ok {
-				if mosnLb, ok := mosnLbInterface.(map[string]interface{}); ok {
-					for k, v := range mosnLb {
-						if vs, ok := v.(string); ok {
-							metadataMap[k] = types.GenerateHashedValue(vs)
-						} else {
-							log.DefaultLogger.Fatal("Currently,only map[string]string type is supported for metadata")
-						}
-					}
-				}
-			}
-		}
-	}
+// MakeHandlerChain creates a RouteHandlerChain, should not returns a nil handler chain, or the stream filters will be ignored
+type MakeHandlerChain func(types.HeaderMap, types.Routers, types.ClusterManager) *RouteHandlerChain
 
-	return metadataMap
+// The reigister order, is a wrapper of registered factory
+// We register a factory with order, a new factory can replace old registered factory only if the register order
+// ig greater than the old one.
+type routerRuleFactoryOrder struct {
+	factory RouterRuleFactory
+	order   uint32
 }
-
-// GetMosnLBMetaData
-// get mosn lb metadata from config
-func GetMosnLBMetaData(route *v2.Router) map[string]interface{} {
-	if metadataInterface, ok := route.Route.MetadataMatch[types.RouterMetadataKey]; ok {
-		if value, ok := metadataInterface.(map[string]interface{}); ok {
-			if mosnLbInterface, ok := value[types.RouterMetadataKeyLb]; ok {
-				if mosnLb, ok := mosnLbInterface.(map[string]interface{}); ok {
-					return mosnLb
-				}
-			}
-		}
-	}
-
-	return nil
+type handlerChainOrder struct {
+	makeHandlerChain MakeHandlerChain
+	order            uint32
 }

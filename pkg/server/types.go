@@ -21,7 +21,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/alipay/sofa-mosn/internal/api/v2"
+	"github.com/alipay/sofa-mosn/pkg/api/v2"
 	"github.com/alipay/sofa-mosn/pkg/log"
 	"github.com/alipay/sofa-mosn/pkg/types"
 )
@@ -38,20 +38,23 @@ const (
 )
 
 type Config struct {
+	ServerName      string
 	LogPath         string
 	LogLevel        log.Level
 	GracefulTimeout time.Duration
 	Processor       int
+	UseNetpollMode  bool
 }
 
 type Server interface {
-	AddListener(lc *v2.ListenerConfig, networkFiltersFactory types.NetworkFilterChainFactory, streamFiltersFactories []types.StreamFilterChainFactory)
-
-	AddListenerAndStart(lc *v2.ListenerConfig, networkFiltersFactory types.NetworkFilterChainFactory, streamFiltersFactories []types.StreamFilterChainFactory) error
+	AddListener(lc *v2.Listener, networkFiltersFactories []types.NetworkFilterChainFactory,
+		streamFiltersFactories []types.StreamFilterChainFactory) (types.ListenerEventListener, error)
 
 	Start()
 
 	Restart()
 
 	Close()
+
+	Handler() types.ConnectionHandler
 }

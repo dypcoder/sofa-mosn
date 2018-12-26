@@ -22,7 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/alipay/sofa-mosn/internal/api/v2"
+	"github.com/alipay/sofa-mosn/pkg/api/v2"
 	"github.com/alipay/sofa-mosn/pkg/types"
 )
 
@@ -34,8 +34,8 @@ type faultInjector struct {
 	readCallbacks types.ReadFilterCallbacks
 }
 
-// NewFaultInjector new fault injector
-func NewFaultInjector(config *v2.FaultInject) FaultInjector {
+// NewFaultInjector makes a fault injector as types.ReadFilter
+func NewFaultInjector(config *v2.FaultInject) types.ReadFilter {
 	return &faultInjector{
 		delayPercent:  config.DelayPercent,
 		delayDuration: config.DelayDuration,
@@ -46,7 +46,7 @@ func (fi *faultInjector) OnData(buffer types.IoBuffer) types.FilterStatus {
 	fi.tryInjectDelay()
 
 	if atomic.LoadUint32(&fi.delaying) > 0 {
-		return types.StopIteration
+		return types.Stop
 	}
 
 	return types.Continue

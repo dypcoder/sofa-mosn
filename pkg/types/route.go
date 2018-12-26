@@ -19,47 +19,62 @@ package types
 
 import (
 	"container/list"
+	"context"
 	"crypto/md5"
 	"regexp"
 	"time"
-)
 
-// Priority type
-type Priority int
-
-// Priority types
-const (
-	PriorityDefault Priority = 0
-	PriorityHigh    Priority = 1
+	"github.com/alipay/sofa-mosn/pkg/api/v2"
 )
 
 // Default parameters for route
+
+type RouterType string
+
 const (
-	GlobalTimeout       = 60 * time.Second
-	DefaultRouteTimeout = 15 * time.Second
-	SofaRouteMatchKey   = "service"
-	RouterMetadataKey   = "filter_metadata"
-	RouterMetadataKeyLb = "mosn.lb"
+	GlobalTimeout                  = 60 * time.Second
+	DefaultRouteTimeout            = 15 * time.Second
+	SofaRouteMatchKey              = "service"
+	RouterMetadataKey              = "filter_metadata"
+	RouterMetadataKeyLb            = "mosn.lb"
+	SofaRouterType      RouterType = "sofa"
 )
 
 // Routers defines and manages all router
 type Routers interface {
-	// Route is used to route with headers
-	Route(headers map[string]string, randomValue uint64) Route
-	// AddRouter adds router to Routers
-	AddRouter(routerName string)
-	// DelRouter deletes router from Routers
-	DelRouter(routerName string)
+	// Route return first route with headers
+	Route(headers HeaderMap, randomValue uint64) Route
+	// GetAllRoutes returns all routes with headers
+	GetAllRoutes(headers HeaderMap, randomValue uint64) []Route
 }
 
-// RouterConfigManager is a manager for all routers' config
-type RouterConfigManager interface {
+// RouterManager is a manager for all routers' config
+type RouterManager interface {
 	// AddRoutersSet adds router config when generated
-	AddRoutersSet(routerConfig Routers)
-	// RemoveRouterInRouters removes routers
-	RemoveRouterInRouters(routerNames []string)
-	// AddRouterInRouters adds routers
-	AddRouterInRouters(routerNames []string)
+	AddOrUpdateRouters(routerConfig *v2.RouterConfiguration) error
+
+	GetRouterWrapperByName(routerConfigName string) RouterWrapper
+}
+
+// HandlerStatus returns the Handler's available status
+type HandlerStatus int
+
+// HandlerStatus enum
+const (
+	HandlerAvailable HandlerStatus = iota
+	HandlerNotAvailable
+	HandlerStop
+)
+
+// RouteHandler is an external check handler for a route
+type RouteHandler interface {
+	// IsAvailable returns HandlerStatus represents the handler will be used/not used/stop next handler check
+	IsAvailable(context.Context, ClusterSnapshot) HandlerStatus
+	// Route returns handler's route
+	Route() Route
+}
+type RouterWrapper interface {
+	GetRouters() Routers
 }
 
 // Route is a route instance
@@ -70,8 +85,8 @@ type Route interface {
 	// RouteRule returns the route rule
 	RouteRule() RouteRule
 
-	// TraceDecorator returns the trace decorator
-	TraceDecorator() TraceDecorator
+	// DirectResponseRule returns direct response rile
+	DirectResponseRule() DirectResponseRule
 }
 
 // RouteRule defines parameters for a route
@@ -81,9 +96,6 @@ type RouteRule interface {
 
 	// GlobalTimeout returns the global timeout
 	GlobalTimeout() time.Duration
-
-	// Priority returns the route's priority
-	Priority() Priority
 
 	// VirtualHost returns the route's virtual host
 	VirtualHost() VirtualHost
@@ -100,7 +112,23 @@ type RouteRule interface {
 	Metadata() RouteMetaData
 
 	// MetadataMatchCriteria returns the metadata that a subset load balancer should match when selecting an upstream host
-	MetadataMatchCriteria() MetadataMatchCriteria
+	// as we may use weighted cluster's metadata, so need to input cluster's name
+	MetadataMatchCriteria(clusterName string) MetadataMatchCriteria
+
+	// UpdateMetaDataMatchCriteria used to update RouteRuleImplBase's metadata match criteria
+	UpdateMetaDataMatchCriteria(metadata map[string]string) error
+
+	// PerFilterConfig returns per filter config from xds
+	PerFilterConfig() map[string]interface{}
+
+	// FinalizeRequestHeaders do potentially destructive header transforms on request headers prior to forwarding
+	FinalizeRequestHeaders(headers HeaderMap, requestInfo RequestInfo)
+
+	// FinalizeResponseHeaders do potentially destructive header transforms on response headers prior to forwarding
+	FinalizeResponseHeaders(headers HeaderMap, requestInfo RequestInfo)
+
+	// PathMatchCriterion returns the route's PathMatchCriterion
+	PathMatchCriterion() PathMatchCriterion
 }
 
 // Policy defines a group of route policy
@@ -231,7 +259,9 @@ type VirtualHost interface {
 	RateLimitPolicy() RateLimitPolicy
 
 	// GetRouteFromEntries returns a Route matched the condition
-	GetRouteFromEntries(headers map[string]string, randomValue uint64) Route
+	GetRouteFromEntries(headers HeaderMap, randomValue uint64) Route
+	// GetAllRoutesFromEntries returns all Route matched the condition
+	GetAllRoutesFromEntries(headers HeaderMap, randomValue uint64) []Route
 }
 
 type MetadataMatcher interface {
@@ -256,10 +286,13 @@ type RedirectRule interface {
 	ResponseBody() string
 }
 
-type TraceDecorator interface {
-	operate(span Span)
+// DirectResponseRule contains direct response info
+type DirectResponseRule interface {
 
-	getOperation() string
+	// StatusCode returns the repsonse status code
+	StatusCode() int
+	// Body returns the response body string
+	Body() string
 }
 
 type MetadataMatchCriterion interface {
@@ -278,15 +311,9 @@ type MetadataMatchCriteria interface {
 	MergeMatchCriteria(metadataMatches map[string]interface{}) MetadataMatchCriteria
 }
 
-type Decorator interface {
-	apply(span Span)
-	getOperation() string
-}
-
+// HashedValue is a value as md5's result
 // TODO: change hashed value to [16]string
 // currently use string for easily debug
-
-// HashedValue is a value as md5's result
 type HashedValue string
 
 type HeaderFormat interface {
@@ -340,7 +367,7 @@ type HeaderData struct {
 	Name         LowerCaseString
 	Value        string
 	IsRegex      bool
-	RegexPattern regexp.Regexp
+	RegexPattern *regexp.Regexp
 }
 
 // ConfigUtility is utility routines for loading route configuration and matching runtime request headers.
